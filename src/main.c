@@ -4,7 +4,12 @@
 #include<stdbool.h>
 #include<unistd.h>
 #include<termios.h>
+
+//#define __JGUI
+#ifdef __JGUI
 #include<SDL2/SDL.h>
+#endif
+
 #include"cpu.h"
 
 #define SCR_WIDTH  160
@@ -12,6 +17,7 @@
 #define SCR_TEXT   "85Emu"
 #define SCR_SCALE  4
 
+#ifdef __JGUI
 void display_pixel(SDL_Renderer* render, int x, int y, uint8_t colour)
 {
 	uint8_t R = (colour & 0b11) * 85;		// Scale the value to 0-255 range
@@ -22,6 +28,7 @@ void display_pixel(SDL_Renderer* render, int x, int y, uint8_t colour)
 	SDL_SetRenderDrawColor(render, R, G, B, 255);  // Use the RGB values
 	SDL_RenderFillRect(render, &box);
 }
+#endif
 
 int main(int argc, char* argv[])
 {
@@ -30,7 +37,7 @@ int main(int argc, char* argv[])
 		printf("invalid usage, ./85Emu <ROM PATH>\n");
 		exit(1);
 	}
-
+#ifdef __JGUI
 	SDL_Event event;
 
 	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) {
@@ -52,7 +59,7 @@ int main(int argc, char* argv[])
 		SDL_DestroyWindow(window);
 		return EXIT_FAILURE;
 	}
-
+#endif
 	int err = load_file(argv[1], 0);
 	if (err != 0) {
 		printf("%s", msgs[err]);
@@ -66,6 +73,7 @@ int main(int argc, char* argv[])
 
 	bool quit = false;
 	while (!quit) {
+#ifdef __JGUI
 		while (SDL_PollEvent(&event) != 0) {
 			switch (event.type) {
 				case SDL_QUIT:
@@ -73,8 +81,12 @@ int main(int argc, char* argv[])
 					break;
 			}
 		}
-		
+#endif		
 		if (running) execute(fetch(ram, PC++));
+#ifndef __JGUI
+		else { quit = true; break; }
+#endif
+#ifdef __JGUI
 		if (redraw) {
 			SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
 			SDL_RenderClear(renderer);
@@ -92,6 +104,7 @@ int main(int argc, char* argv[])
 			redraw = false;
 		}
 		SDL_Delay(10); // Reduce CPU usage by adding a small delay
+#endif
 	}
 
 	fprintf(LOG_FILE, "A   - %.2x\n", psw.A);
@@ -104,8 +117,10 @@ int main(int argc, char* argv[])
 
 	fclose(LOG_FILE);
 
+#ifdef __JGUI
 	SDL_DestroyRenderer(renderer);
 	SDL_DestroyWindow(window);
 	SDL_Quit();
+#endif
 	return 0;
 }

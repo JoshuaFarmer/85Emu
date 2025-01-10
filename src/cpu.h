@@ -4,7 +4,10 @@
 #include<stdbool.h>
 #include<unistd.h>
 #include<termios.h>
+
+#ifdef __JGUI
 #include<SDL2/SDL.h>
+#endif
 
 #define RESET_VECTOR 0xFFFF
 #define RAM_SIZE	   0x10000
