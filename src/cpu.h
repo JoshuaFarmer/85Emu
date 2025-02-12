@@ -14,13 +14,13 @@
 
 #pragma pack(1)
 
-#define X(x)  *((uint16_t*)&x)
-#define XF(x) *((uint8_t*)&x)
-
 #define FILE_NAME "ports.dat"
 
-typedef struct {
-	uint8_t NUL1:1,S:1,Z:1,K:1,AC:1,NUL:1,P:1,CY:1;
+typedef union {
+	struct {
+		uint8_t NUL1:1,S:1,Z:1,K:1,AC:1,NUL:1,P:1,CY:1;
+	} F;
+	uint8_t x;
 } Flags_t;
 
 struct {
@@ -28,13 +28,16 @@ struct {
 	Flags_t F;
 } psw;
 
-typedef struct {
-	uint8_t H,L;
+typedef union {
+	struct {
+		uint8_t H,L;
+	} bytes;
+	uint16_t X;
 } _16Bit;
 
-_16Bit BC, DE, HL, SP;
+_16Bit BC={.X=0}, DE={.X=0}, HL={.X=0}, SP={.X=0};
 
-uint16_t PC;
+uint16_t PC=0;
 uint8_t  ram[RAM_SIZE];
 
 bool running = true;
@@ -237,36 +240,48 @@ void ram_write(uint8_t* ram, uint16_t addr, uint8_t value)
 	ram[addr % (RAM_SIZE)] = value;
 }
 
-void Return() {
-	PC  = fetch(ram, X(SP) - 2);
-	PC |= fetch(ram, X(SP) - 1) << 8;
-	X(SP) = X(SP) + 2;
+inline void Push16(uint16_t x)
+{
+	ram_write(ram, SP.X--, x&255);
+	ram_write(ram, SP.X--, x>>8);
 }
 
-void Call() {
-	_16Bit addr;
-	addr.L = fetch(ram, PC++);
-	addr.H = fetch(ram, PC++);
-	
-	X(SP) = X(SP) - 2;
-	ram_write(ram, X(SP) + 1,  PC>>8);
-	ram_write(ram, X(SP), PC);
+inline uint16_t Pop16()
+{
+	return (fetch(ram, SP.X++)<<8)|fetch(ram, SP.X++);
+}
 
-	PC = X(addr);
+inline _16Bit Fe16imm()
+{
+	_16Bit x;
+	x.bytes.L = fetch(ram, PC++);
+	x.bytes.H = fetch(ram, PC++);
+	return x;
+}
+
+void Return()
+{
+	PC = Pop16();
+}
+
+void Call()
+{
+	_16Bit addr = Fe16imm();
+	Push16(PC);
+	PC = addr.X;
 }
 
 void JumpI() {
 	_16Bit addr;
-	addr.L = fetch(ram, PC++);
-	addr.H = fetch(ram, PC++);
-	PC = X(addr);
+	addr.bytes.L = fetch(ram, PC++);
+	addr.bytes.H = fetch(ram, PC++);
+	PC = addr.X;
 }
 
-// Helper Functions
 void Reset(int x) {
-	X(SP) = X(SP) - 2;
-	ram_write(ram, X(SP) + 1,  PC>>8);
-	ram_write(ram, X(SP), PC);
+	SP.X = SP.X - 2;
+	ram_write(ram, SP.X + 1,  PC>>8);
+	ram_write(ram, SP.X, PC);
 	PC = x * 8; // 0, 8, etc
 }
 
@@ -306,9 +321,9 @@ void Out() {
 }
 
 void Flags(int a, int b) {
-	psw.F.Z = (a == 0);
-	psw.F.CY = (a < b);
-	psw.F.S = (a & 0x80) != 0;
+	psw.F.F.Z = (a == 0);
+	psw.F.F.CY = (a < b);
+	psw.F.F.S = (a & 0x80) != 0;
 }
 
 // little endian means the little byte is FIRST in memory (a bit weird if u think about the name.)
@@ -322,353 +337,353 @@ void execute(uint8_t X)
 		
 		// Part 1, Basic Data
 		case MVI_A: psw.A = fetch(ram, PC++); break;
-		case MVI_B: BC.H = fetch(ram, PC++); break;
-		case MVI_C: BC.L = fetch(ram, PC++); break;
-		case MVI_D: DE.H = fetch(ram, PC++); break;
-		case MVI_E: DE.L = fetch(ram, PC++); break;
-		case MVI_H: HL.H = fetch(ram, PC++); break;
-		case MVI_L: HL.L = fetch(ram, PC++); break;
-		case MVI_M: ram_write(ram, X(HL), fetch(ram, PC++)); break;
+		case MVI_B: BC.bytes.H = fetch(ram, PC++); break;
+		case MVI_C: BC.bytes.L = fetch(ram, PC++); break;
+		case MVI_D: DE.bytes.H = fetch(ram, PC++); break;
+		case MVI_E: DE.bytes.L = fetch(ram, PC++); break;
+		case MVI_H: HL.bytes.H = fetch(ram, PC++); break;
+		case MVI_L: HL.bytes.L = fetch(ram, PC++); break;
+		case MVI_M: ram_write(ram, HL.X, fetch(ram, PC++)); break;
 
-		case LXI_BC_DATA: BC.L = fetch(ram, PC++); BC.H = fetch(ram, PC++); break;
-		case STAX_B: ram_write(ram, X(BC), psw.A); break;
+		case LXI_BC_DATA: BC.bytes.L = fetch(ram, PC++); BC.bytes.H = fetch(ram, PC++); break;
+		case STAX_B: ram_write(ram, BC.X, psw.A); break;
 
-		case MOV_B_B: BC.H = BC.H; break;
-		case MOV_B_C: BC.H = BC.L; break;
-		case MOV_B_D: BC.H = DE.H; break;
-		case MOV_B_E: BC.H = DE.L; break;
-		case MOV_B_H: BC.H = HL.H; break;
-		case MOV_B_L: BC.H = HL.L; break;
-		case MOV_B_M: BC.H = fetch(ram, X(HL)); break;
-		case MOV_B_A: BC.H = psw.A; break;
+		case MOV_B_B: BC.bytes.H = BC.bytes.H; break;
+		case MOV_B_C: BC.bytes.H = BC.bytes.L; break;
+		case MOV_B_D: BC.bytes.H = DE.bytes.H; break;
+		case MOV_B_E: BC.bytes.H = DE.bytes.L; break;
+		case MOV_B_H: BC.bytes.H = HL.bytes.H; break;
+		case MOV_B_L: BC.bytes.H = HL.bytes.L; break;
+		case MOV_B_M: BC.bytes.H = fetch(ram, HL.X); break;
+		case MOV_B_A: BC.bytes.H = psw.A; break;
 
-		case MOV_C_B: BC.L = BC.H; break;
-		case MOV_C_C: BC.L = BC.L; break;
-		case MOV_C_D: BC.L = DE.H; break;
-		case MOV_C_E: BC.L = DE.L; break;
-		case MOV_C_H: BC.L = HL.H; break;
-		case MOV_C_L: BC.L = HL.L; break;
-		case MOV_C_M: BC.L = fetch(ram, X(HL)); break;
-		case MOV_C_A: BC.L = psw.A; break;
+		case MOV_C_B: BC.bytes.L = BC.bytes.H; break;
+		case MOV_C_C: BC.bytes.L = BC.bytes.L; break;
+		case MOV_C_D: BC.bytes.L = DE.bytes.H; break;
+		case MOV_C_E: BC.bytes.L = DE.bytes.L; break;
+		case MOV_C_H: BC.bytes.L = HL.bytes.H; break;
+		case MOV_C_L: BC.bytes.L = HL.bytes.L; break;
+		case MOV_C_M: BC.bytes.L = fetch(ram, HL.X); break;
+		case MOV_C_A: BC.bytes.L = psw.A; break;
 
-		case MOV_D_B: DE.H = BC.H; break;
-		case MOV_D_C: DE.H = BC.L; break;
-		case MOV_D_D: DE.H = DE.H; break;
-		case MOV_D_E: DE.H = DE.L; break;
-		case MOV_D_H: DE.H = HL.H; break;
-		case MOV_D_L: DE.H = HL.L; break;
-		case MOV_D_M: DE.H = fetch(ram, X(HL)); break;
-		case MOV_D_A: DE.H = psw.A; break;
+		case MOV_D_B: DE.bytes.H = BC.bytes.H; break;
+		case MOV_D_C: DE.bytes.H = BC.bytes.L; break;
+		case MOV_D_D: DE.bytes.H = DE.bytes.H; break;
+		case MOV_D_E: DE.bytes.H = DE.bytes.L; break;
+		case MOV_D_H: DE.bytes.H = HL.bytes.H; break;
+		case MOV_D_L: DE.bytes.H = HL.bytes.L; break;
+		case MOV_D_M: DE.bytes.H = fetch(ram, HL.X); break;
+		case MOV_D_A: DE.bytes.H = psw.A; break;
 
-		case MOV_E_B: DE.L = BC.H; break;
-		case MOV_E_C: DE.L = BC.L; break;
-		case MOV_E_D: DE.L = DE.H; break;
-		case MOV_E_E: DE.L = DE.L; break;
-		case MOV_E_H: DE.L = HL.H; break;
-		case MOV_E_L: DE.L = HL.L; break;
-		case MOV_E_M: DE.L = fetch(ram, X(HL)); break;
-		case MOV_E_A: DE.L = psw.A; break;
+		case MOV_E_B: DE.bytes.L = BC.bytes.H; break;
+		case MOV_E_C: DE.bytes.L = BC.bytes.L; break;
+		case MOV_E_D: DE.bytes.L = DE.bytes.H; break;
+		case MOV_E_E: DE.bytes.L = DE.bytes.L; break;
+		case MOV_E_H: DE.bytes.L = HL.bytes.H; break;
+		case MOV_E_L: DE.bytes.L = HL.bytes.L; break;
+		case MOV_E_M: DE.bytes.L = fetch(ram, HL.X); break;
+		case MOV_E_A: DE.bytes.L = psw.A; break;
 
-		case MOV_H_B: HL.H = BC.H; break;
-		case MOV_H_C: HL.H = BC.L; break;
-		case MOV_H_D: HL.H = DE.H; break;
-		case MOV_H_E: HL.H = DE.L; break;
-		case MOV_H_H: HL.H = HL.H; break;
-		case MOV_H_L: HL.H = HL.L; break;
-		case MOV_H_M: HL.H = fetch(ram, X(HL)); break;
-		case MOV_H_A: HL.H = psw.A; break;
+		case MOV_H_B: HL.bytes.H = BC.bytes.H; break;
+		case MOV_H_C: HL.bytes.H = BC.bytes.L; break;
+		case MOV_H_D: HL.bytes.H = DE.bytes.H; break;
+		case MOV_H_E: HL.bytes.H = DE.bytes.L; break;
+		case MOV_H_H: HL.bytes.H = HL.bytes.H; break;
+		case MOV_H_L: HL.bytes.H = HL.bytes.L; break;
+		case MOV_H_M: HL.bytes.H = fetch(ram, HL.X); break;
+		case MOV_H_A: HL.bytes.H = psw.A; break;
 
-		case MOV_L_B: HL.L = BC.H; break;
-		case MOV_L_C: HL.L = BC.L; break;
-		case MOV_L_D: HL.L = DE.H; break;
-		case MOV_L_E: HL.L = DE.L; break;
-		case MOV_L_H: HL.L = HL.H; break;
-		case MOV_L_L: HL.L = HL.L; break;
-		case MOV_L_M: HL.L = fetch(ram, X(HL)); break;
-		case MOV_L_A: HL.L = psw.A; break;
+		case MOV_L_B: HL.bytes.L = BC.bytes.H; break;
+		case MOV_L_C: HL.bytes.L = BC.bytes.L; break;
+		case MOV_L_D: HL.bytes.L = DE.bytes.H; break;
+		case MOV_L_E: HL.bytes.L = DE.bytes.L; break;
+		case MOV_L_H: HL.bytes.L = HL.bytes.H; break;
+		case MOV_L_L: HL.bytes.L = HL.bytes.L; break;
+		case MOV_L_M: HL.bytes.L = fetch(ram, HL.X); break;
+		case MOV_L_A: HL.bytes.L = psw.A; break;
 
-		case MOV_M_B: ram_write(ram, X(HL), BC.H); break;
-		case MOV_M_C: ram_write(ram, X(HL), BC.L); break;
-		case MOV_M_D: ram_write(ram, X(HL), DE.H); break;
-		case MOV_M_E: ram_write(ram, X(HL), DE.L); break;
-		case MOV_M_H: ram_write(ram, X(HL), HL.H); break;
-		case MOV_M_L: ram_write(ram, X(HL), HL.L); break;
+		case MOV_M_B: ram_write(ram, HL.X, BC.bytes.H); break;
+		case MOV_M_C: ram_write(ram, HL.X, BC.bytes.L); break;
+		case MOV_M_D: ram_write(ram, HL.X, DE.bytes.H); break;
+		case MOV_M_E: ram_write(ram, HL.X, DE.bytes.L); break;
+		case MOV_M_H: ram_write(ram, HL.X, HL.bytes.H); break;
+		case MOV_M_L: ram_write(ram, HL.X, HL.bytes.L); break;
 
-		case MOV_M_A: ram_write(ram, X(HL), psw.A); break;
+		case MOV_M_A: ram_write(ram, HL.X, psw.A); break;
 
-		case MOV_A_B: psw.A = BC.H; break;
-		case MOV_A_C: psw.A = BC.L; break;
-		case MOV_A_D: psw.A = DE.H; break;
-		case MOV_A_E: psw.A = DE.L; break;
-		case MOV_A_H: psw.A = HL.H; break;
-		case MOV_A_L: psw.A = HL.L; break;
-		case MOV_A_M: psw.A = fetch(ram, X(HL)); break;
+		case MOV_A_B: psw.A = BC.bytes.H; break;
+		case MOV_A_C: psw.A = BC.bytes.L; break;
+		case MOV_A_D: psw.A = DE.bytes.H; break;
+		case MOV_A_E: psw.A = DE.bytes.L; break;
+		case MOV_A_H: psw.A = HL.bytes.H; break;
+		case MOV_A_L: psw.A = HL.bytes.L; break;
+		case MOV_A_M: psw.A = fetch(ram, HL.X); break;
 		case MOV_A_A: psw.A = psw.A; break;
 
 		// Part 2, Basic Arithmetic
-		case ADD_B: psw.A += BC.H; Flags(psw.A, BC.H); break;
-		case ADD_C: psw.A += BC.L; Flags(psw.A, BC.L); break;
-		case ADD_D: psw.A += DE.H; Flags(psw.A, DE.H); break;
-		case ADD_E: psw.A += DE.L; Flags(psw.A, DE.L); break;
-		case ADD_H: psw.A += HL.H; Flags(psw.A, HL.H); break;
-		case ADD_L: psw.A += HL.L; Flags(psw.A, HL.L); break;
+		case ADD_B: psw.A += BC.bytes.H; Flags(psw.A, BC.bytes.H); break;
+		case ADD_C: psw.A += BC.bytes.L; Flags(psw.A, BC.bytes.L); break;
+		case ADD_D: psw.A += DE.bytes.H; Flags(psw.A, DE.bytes.H); break;
+		case ADD_E: psw.A += DE.bytes.L; Flags(psw.A, DE.bytes.L); break;
+		case ADD_H: psw.A += HL.bytes.H; Flags(psw.A, HL.bytes.H); break;
+		case ADD_L: psw.A += HL.bytes.L; Flags(psw.A, HL.bytes.L); break;
 		case ADI_D8: psw.A += fetch(ram, PC); Flags(psw.A, fetch(ram, PC++)); break;
-		case ADD_M: { uint8_t value = fetch(ram, X(HL)); psw.A += value; Flags(psw.A, value); } break;
-		case ADD_A: psw.A += psw.A; psw.F.Z = (psw.A == 0); psw.F.CY = 1; psw.F.S = (psw.A & 0x80) != 0; break;
+		case ADD_M: { uint8_t value = fetch(ram, HL.X); psw.A += value; Flags(psw.A, value); } break;
+		case ADD_A: psw.A += psw.A; psw.F.F.Z = (psw.A == 0); psw.F.F.CY = 1; psw.F.F.S = (psw.A & 0x80) != 0; break;
 
-		case ADC_A: psw.A += psw.A + psw.F.CY; Flags(psw.A, psw.A + psw.F.CY); break;
-		case ADC_B: psw.A += BC.H + psw.F.CY; Flags(psw.A, BC.H + psw.F.CY); break;
-		case ADC_C: psw.A += BC.L + psw.F.CY; Flags(psw.A, BC.L + psw.F.CY); break;
-		case ADC_D: psw.A += DE.H + psw.F.CY; Flags(psw.A, DE.H + psw.F.CY); break;
-		case ADC_E: psw.A += DE.L + psw.F.CY; Flags(psw.A, DE.L + psw.F.CY); break;
-		case ADC_H: psw.A += HL.H + psw.F.CY; Flags(psw.A, HL.H + psw.F.CY); break;
-		case ADC_L: psw.A += HL.L + psw.F.CY; Flags(psw.A, HL.L + psw.F.CY); break;
-		case ADC_M: { uint8_t value = fetch(ram, X(HL)); psw.A += value + psw.F.CY; Flags(psw.A, value + psw.F.CY); } break;
-		case ACI_D8: psw.A += fetch(ram, PC) + psw.F.CY; Flags(psw.A, fetch(ram, PC++) + psw.F.CY); break;
+		case ADC_A: psw.A += psw.A + psw.F.F.CY; Flags(psw.A, psw.A + psw.F.F.CY); break;
+		case ADC_B: psw.A += BC.bytes.H + psw.F.F.CY; Flags(psw.A, BC.bytes.H + psw.F.F.CY); break;
+		case ADC_C: psw.A += BC.bytes.L + psw.F.F.CY; Flags(psw.A, BC.bytes.L + psw.F.F.CY); break;
+		case ADC_D: psw.A += DE.bytes.H + psw.F.F.CY; Flags(psw.A, DE.bytes.H + psw.F.F.CY); break;
+		case ADC_E: psw.A += DE.bytes.L + psw.F.F.CY; Flags(psw.A, DE.bytes.L + psw.F.F.CY); break;
+		case ADC_H: psw.A += HL.bytes.H + psw.F.F.CY; Flags(psw.A, HL.bytes.H + psw.F.F.CY); break;
+		case ADC_L: psw.A += HL.bytes.L + psw.F.F.CY; Flags(psw.A, HL.bytes.L + psw.F.F.CY); break;
+		case ADC_M: { uint8_t value = fetch(ram, HL.X); psw.A += value + psw.F.F.CY; Flags(psw.A, value + psw.F.F.CY); } break;
+		case ACI_D8: psw.A += fetch(ram, PC) + psw.F.F.CY; Flags(psw.A, fetch(ram, PC++) + psw.F.F.CY); break;
 
 		case SUB_A: psw.A = 0; Flags(psw.A, psw.A); break;
-		case SUB_B: psw.A -= BC.H; Flags(psw.A, BC.H); break;
-		case SUB_C: psw.A -= BC.L; Flags(psw.A, BC.L); break;
-		case SUB_D: psw.A -= DE.H; Flags(psw.A, DE.H); break;
-		case SUB_E: psw.A -= DE.L; Flags(psw.A, DE.L); break;
-		case SUB_H: psw.A -= HL.H; Flags(psw.A, HL.H); break;
-		case SUB_L: psw.A -= HL.L; Flags(psw.A, HL.L); break;
-		case SUB_M: psw.A -= fetch(ram, X(HL)); Flags(psw.A, fetch(ram, X(HL))); break;
+		case SUB_B: psw.A -= BC.bytes.H; Flags(psw.A, BC.bytes.H); break;
+		case SUB_C: psw.A -= BC.bytes.L; Flags(psw.A, BC.bytes.L); break;
+		case SUB_D: psw.A -= DE.bytes.H; Flags(psw.A, DE.bytes.H); break;
+		case SUB_E: psw.A -= DE.bytes.L; Flags(psw.A, DE.bytes.L); break;
+		case SUB_H: psw.A -= HL.bytes.H; Flags(psw.A, HL.bytes.H); break;
+		case SUB_L: psw.A -= HL.bytes.L; Flags(psw.A, HL.bytes.L); break;
+		case SUB_M: psw.A -= fetch(ram, HL.X); Flags(psw.A, fetch(ram, HL.X)); break;
 		case SUI_D8: psw.A -= fetch(ram, PC); Flags(psw.A, fetch(ram, PC++)); break;
 
-		case SBB_A: { uint8_t borrow = psw.A + psw.F.CY; psw.F.Z = (borrow == psw.A); psw.F.S = 0; psw.F.CY = 0; psw.A = 0; } break;
-		case SBB_B: { uint8_t borrow = BC.H + psw.F.CY; psw.A -= borrow; Flags(psw.A, borrow); } break;
-		case SBB_C: { uint8_t borrow = BC.L + psw.F.CY; psw.A -= borrow; Flags(psw.A, borrow); } break;
-		case SBB_D: { uint8_t borrow = DE.H + psw.F.CY; psw.A -= borrow; Flags(psw.A, borrow); } break;
-		case SBB_E: { uint8_t borrow = DE.L + psw.F.CY; psw.A -= borrow; Flags(psw.A, borrow); } break;
-		case SBB_H: { uint8_t borrow = HL.H + psw.F.CY; psw.A -= borrow; Flags(psw.A, borrow); } break;
-		case SBB_L: { uint8_t borrow = HL.L + psw.F.CY; psw.A -= borrow; Flags(psw.A, borrow); } break;
-		case SBB_M: { uint8_t borrow = fetch(ram, X(HL)) + psw.F.CY; psw.A -= borrow; Flags(psw.A, borrow); } break;
-		case SBI_D8: { uint8_t borrow = fetch(ram, PC++) + psw.F.CY; psw.A -= borrow; Flags(psw.A, borrow); } break;
+		case SBB_A: { uint8_t borrow = psw.A + psw.F.F.CY; psw.F.F.Z = (borrow == psw.A); psw.F.F.S = 0; psw.F.F.CY = 0; psw.A = 0; } break;
+		case SBB_B: { uint8_t borrow = BC.bytes.H + psw.F.F.CY; psw.A -= borrow; Flags(psw.A, borrow); } break;
+		case SBB_C: { uint8_t borrow = BC.bytes.L + psw.F.F.CY; psw.A -= borrow; Flags(psw.A, borrow); } break;
+		case SBB_D: { uint8_t borrow = DE.bytes.H + psw.F.F.CY; psw.A -= borrow; Flags(psw.A, borrow); } break;
+		case SBB_E: { uint8_t borrow = DE.bytes.L + psw.F.F.CY; psw.A -= borrow; Flags(psw.A, borrow); } break;
+		case SBB_H: { uint8_t borrow = HL.bytes.H + psw.F.F.CY; psw.A -= borrow; Flags(psw.A, borrow); } break;
+		case SBB_L: { uint8_t borrow = HL.bytes.L + psw.F.F.CY; psw.A -= borrow; Flags(psw.A, borrow); } break;
+		case SBB_M: { uint8_t borrow = fetch(ram, HL.X) + psw.F.F.CY; psw.A -= borrow; Flags(psw.A, borrow); } break;
+		case SBI_D8: { uint8_t borrow = fetch(ram, PC++) + psw.F.F.CY; psw.A -= borrow; Flags(psw.A, borrow); } break;
 
 		// Part 3, Logical Operations
 		case ANA_A: break;
-		case ANA_B: psw.A &= BC.H; Flags(psw.A, BC.H); break;
-		case ANA_C: psw.A &= BC.L; Flags(psw.A, BC.H); break;
-		case ANA_D: psw.A &= DE.H; Flags(psw.A, DE.H); break;
-		case ANA_E: psw.A &= DE.L; Flags(psw.A, DE.H); break;
-		case ANA_H: psw.A &= HL.H; Flags(psw.A, HL.H); break;
-		case ANA_L: psw.A &= HL.L; Flags(psw.A, HL.H); break;
-		case ANA_M: psw.A &= fetch(ram, X(HL)); Flags(psw.A, fetch(ram, X(HL))); break;
+		case ANA_B: psw.A &= BC.bytes.H; Flags(psw.A, BC.bytes.H); break;
+		case ANA_C: psw.A &= BC.bytes.L; Flags(psw.A, BC.bytes.H); break;
+		case ANA_D: psw.A &= DE.bytes.H; Flags(psw.A, DE.bytes.H); break;
+		case ANA_E: psw.A &= DE.bytes.L; Flags(psw.A, DE.bytes.H); break;
+		case ANA_H: psw.A &= HL.bytes.H; Flags(psw.A, HL.bytes.H); break;
+		case ANA_L: psw.A &= HL.bytes.L; Flags(psw.A, HL.bytes.H); break;
+		case ANA_M: psw.A &= fetch(ram, HL.X); Flags(psw.A, fetch(ram, HL.X)); break;
 		case ANI_D8: psw.A &= fetch(ram, PC); Flags(psw.A, fetch(ram, PC++)); break;
 
 		case XRA_A: psw.A = 0; Flags(psw.A, psw.A); break;
-		case XRA_B: psw.A ^= BC.H; Flags(psw.A, BC.H); break;
-		case XRA_C: psw.A ^= BC.L; Flags(psw.A, BC.L); break;
-		case XRA_D: psw.A ^= DE.H; Flags(psw.A, DE.H); break;
-		case XRA_E: psw.A ^= DE.L; Flags(psw.A, DE.L); break;
-		case XRA_H: psw.A ^= HL.H; Flags(psw.A, HL.H); break;
-		case XRA_L: psw.A ^= HL.L; Flags(psw.A, HL.L); break;
-		case XRA_M: psw.A ^= fetch(ram, X(HL)); Flags(psw.A, fetch(ram, X(HL))); break;
+		case XRA_B: psw.A ^= BC.bytes.H; Flags(psw.A, BC.bytes.H); break;
+		case XRA_C: psw.A ^= BC.bytes.L; Flags(psw.A, BC.bytes.L); break;
+		case XRA_D: psw.A ^= DE.bytes.H; Flags(psw.A, DE.bytes.H); break;
+		case XRA_E: psw.A ^= DE.bytes.L; Flags(psw.A, DE.bytes.L); break;
+		case XRA_H: psw.A ^= HL.bytes.H; Flags(psw.A, HL.bytes.H); break;
+		case XRA_L: psw.A ^= HL.bytes.L; Flags(psw.A, HL.bytes.L); break;
+		case XRA_M: psw.A ^= fetch(ram, HL.X); Flags(psw.A, fetch(ram, HL.X)); break;
 		case XRI_D8: psw.A ^= fetch(ram, PC); Flags(psw.A, fetch(ram, PC++)); break;
 
 		case ORA_A: psw.A = 0; Flags(psw.A, psw.A); break;
-		case ORA_B: psw.A |= BC.H; Flags(psw.A, BC.H); break;
-		case ORA_C: psw.A |= BC.L; Flags(psw.A, BC.L); break;
-		case ORA_D: psw.A |= DE.H; Flags(psw.A, DE.H); break;
-		case ORA_E: psw.A |= DE.L; Flags(psw.A, DE.L); break;
-		case ORA_H: psw.A |= HL.H; Flags(psw.A, HL.H); break;
-		case ORA_L: psw.A |= HL.L; Flags(psw.A, HL.L); break;
-		case ORA_M: psw.A |= fetch(ram, X(HL)); Flags(psw.A, fetch(ram, X(HL))); break;
+		case ORA_B: psw.A |= BC.bytes.H; Flags(psw.A, BC.bytes.H); break;
+		case ORA_C: psw.A |= BC.bytes.L; Flags(psw.A, BC.bytes.L); break;
+		case ORA_D: psw.A |= DE.bytes.H; Flags(psw.A, DE.bytes.H); break;
+		case ORA_E: psw.A |= DE.bytes.L; Flags(psw.A, DE.bytes.L); break;
+		case ORA_H: psw.A |= HL.bytes.H; Flags(psw.A, HL.bytes.H); break;
+		case ORA_L: psw.A |= HL.bytes.L; Flags(psw.A, HL.bytes.L); break;
+		case ORA_M: psw.A |= fetch(ram, HL.X); Flags(psw.A, fetch(ram, HL.X)); break;
 		case ORI_D8: psw.A |= fetch(ram, PC); Flags(psw.A, fetch(ram, PC++)); break;
 
-		case CMP_A: { psw.F.Z = 1; psw.F.S = 0; psw.F.CY = 0; } break;
-		case CMP_B: { int tmp = psw.A; tmp -= BC.H; Flags(tmp, BC.H); } break;
-		case CMP_C: { int tmp = psw.A; tmp -= BC.L; Flags(tmp, BC.L); } break;
-		case CMP_D: { int tmp = psw.A; tmp -= DE.H; Flags(tmp, DE.H); } break;
-		case CMP_E: { int tmp = psw.A; tmp -= DE.L; Flags(tmp, DE.L); } break;
-		case CMP_H: { int tmp = psw.A; tmp -= HL.H; Flags(tmp, HL.H); } break;
-		case CMP_L: { int tmp = psw.A; tmp -= HL.L; Flags(tmp, HL.L); } break;
-		case CMP_M: { int tmp = psw.A; tmp -= fetch(ram, X(HL)); Flags(tmp, fetch(ram, X(HL))); } break;
+		case CMP_A: { psw.F.F.Z = 1; psw.F.F.S = 0; psw.F.F.CY = 0; } break;
+		case CMP_B: { int tmp = psw.A; tmp -= BC.bytes.H; Flags(tmp, BC.bytes.H); } break;
+		case CMP_C: { int tmp = psw.A; tmp -= BC.bytes.L; Flags(tmp, BC.bytes.L); } break;
+		case CMP_D: { int tmp = psw.A; tmp -= DE.bytes.H; Flags(tmp, DE.bytes.H); } break;
+		case CMP_E: { int tmp = psw.A; tmp -= DE.bytes.L; Flags(tmp, DE.bytes.L); } break;
+		case CMP_H: { int tmp = psw.A; tmp -= HL.bytes.H; Flags(tmp, HL.bytes.H); } break;
+		case CMP_L: { int tmp = psw.A; tmp -= HL.bytes.L; Flags(tmp, HL.bytes.L); } break;
+		case CMP_M: { int tmp = psw.A; tmp -= fetch(ram, HL.X); Flags(tmp, fetch(ram, HL.X)); } break;
 		case CPI_D8: { int tmp = psw.A; tmp -= fetch(ram, PC); Flags(tmp, fetch(ram, PC++)); } break;
 
 		// Part 4, Wide Operations
-		case INX_B: X(BC) = X(BC) + 1; break;
-		case INX_D: X(DE) = X(DE) + 1; break;
-		case INX_H: X(HL) = X(HL) + 1; break;
-		case INX_SP: X(SP) = X(SP) + 1; break;
+		case INX_B: BC.X = BC.X + 1; break;
+		case INX_D: DE.X = DE.X + 1; break;
+		case INX_H: HL.X = HL.X + 1; break;
+		case INX_SP: SP.X = SP.X + 1; break;
 
-		case DCX_B: X(BC) = X(BC) - 1; break;
-		case DCX_D: X(DE) = X(DE) - 1; break;
-		case DCX_H: X(HL)= X(HL) - 1; break;
-		case DCX_SP: X(SP) = X(SP) - 1; break;
+		case DCX_B: BC.X = BC.X - 1; break;
+		case DCX_D: DE.X = DE.X - 1; break;
+		case DCX_H: HL.X= HL.X - 1; break;
+		case DCX_SP: SP.X = SP.X - 1; break;
 
-		case LDAX_B: psw.A = fetch(ram, X(BC)); break;
-		case LDAX_D: psw.A = fetch(ram, X(DE)); break;
-		case STAX_D: ram_write(ram, X(DE), psw.A); break;
+		case LDAX_B: psw.A = fetch(ram, BC.X); break;
+		case LDAX_D: psw.A = fetch(ram, DE.X); break;
+		case STAX_D: ram_write(ram, DE.X, psw.A); break;
 
 		case INR_A:
 			psw.A+=1;
-			psw.F.Z = (psw.A == 0);  // Zero flag
-			psw.F.CY = (psw.A == 0xFF);  // Carry flag
-			psw.F.S = (psw.A & 0x80) != 0;  // Sign flag
+			psw.F.F.Z = (psw.A == 0);  // Zero flag
+			psw.F.F.CY = (psw.A == 0xFF);  // Carry flag
+			psw.F.F.S = (psw.A & 0x80) != 0;  // Sign flag
 			break;
 
 		case INR_B:
-			BC.H++;
-			psw.F.Z = (BC.H == 0);  // Zero flag
-			psw.F.CY = (BC.H == 0xFF);  // Carry flag
-			psw.F.S = (BC.H & 0x80) != 0;  // Sign flag
+			BC.bytes.H++;
+			psw.F.F.Z = (BC.bytes.H == 0);  // Zero flag
+			psw.F.F.CY = (BC.bytes.H == 0xFF);  // Carry flag
+			psw.F.F.S = (BC.bytes.H & 0x80) != 0;  // Sign flag
 			break;
 
 		case DCR_B:
-			BC.H--;
-			psw.F.Z = (BC.H == 0);  // Zero flag
-			psw.F.S = (BC.H & 0x80) != 0;  // Sign flag
+			BC.bytes.H--;
+			psw.F.F.Z = (BC.bytes.H == 0);  // Zero flag
+			psw.F.F.S = (BC.bytes.H & 0x80) != 0;  // Sign flag
 			break;
 		
 		case DCR_A:
 			psw.A--;
-			psw.F.Z = (psw.A == 0);  // Zero flag
-			psw.F.S = (psw.A & 0x80) != 0;  // Sign flag
+			psw.F.F.Z = (psw.A == 0);  // Zero flag
+			psw.F.F.S = (psw.A & 0x80) != 0;  // Sign flag
 			break;
 
 		case RLC: 
 			{
 				uint8_t carry = psw.A & 0x80;
 				psw.A = (psw.A << 1) | (carry >> 7);
-				psw.F.CY = (carry != 0);
+				psw.F.F.CY = (carry != 0);
 			}
 			break;
 
 		case DAD_B:
 			{
-				uint32_t HL_pair = X(HL);
-				uint32_t BC_pair = X(BC);
+				uint32_t HL_pair = HL.X;
+				uint32_t BC_pair = BC.X;
 				uint32_t result = HL_pair + BC_pair;
-				X(HL) = result & 0xFFFF;
-				psw.F.CY = (result > 0xFFFF);  // Set carry if overflow
+				HL.X = result & 0xFFFF;
+				psw.F.F.CY = (result > 0xFFFF);  // Set carry if overflow
 			}
 			break;
 
 		case INR_C:
-			BC.L++;
-			psw.F.Z = (BC.L == 0);  // Zero flag
-			psw.F.S = (BC.L & 0x80) != 0;  // Sign flag
+			BC.bytes.L++;
+			psw.F.F.Z = (BC.bytes.L == 0);  // Zero flag
+			psw.F.F.S = (BC.bytes.L & 0x80) != 0;  // Sign flag
 			break;
 
 		case DCR_C:
-			BC.L--;
-			psw.F.Z = (BC.L == 0);  // Zero flag
-			psw.F.S = (BC.L & 0x80) != 0;  // Sign flag
+			BC.bytes.L--;
+			psw.F.F.Z = (BC.bytes.L == 0);  // Zero flag
+			psw.F.F.S = (BC.bytes.L & 0x80) != 0;  // Sign flag
 			break;
 
 		case RRC:
 			{
 				uint8_t carry = psw.A & 0x01;
 				psw.A = (psw.A >> 1) | (carry << 7);
-				psw.F.CY = (carry != 0);
+				psw.F.F.CY = (carry != 0);
 			}
 			break;
 
 		case LXI_DE_DATA:
-			DE.L = fetch(ram, PC++);
-			DE.H = fetch(ram, PC++);
+			DE.bytes.L = fetch(ram, PC++);
+			DE.bytes.H = fetch(ram, PC++);
 			break;
 
 
 		case INR_D:
-			DE.H++;
-			psw.F.Z = (DE.H == 0);  // Zero flag
-			psw.F.S = (DE.H & 0x80) != 0;  // Sign flag
+			DE.bytes.H++;
+			psw.F.F.Z = (DE.bytes.H == 0);  // Zero flag
+			psw.F.F.S = (DE.bytes.H & 0x80) != 0;  // Sign flag
 			break;
 
 		case DCR_D:
-			DE.H--;
-			psw.F.Z = (DE.H == 0);  // Zero flag
-			psw.F.S = (DE.H & 0x80) != 0;  // Sign flag
+			DE.bytes.H--;
+			psw.F.F.Z = (DE.bytes.H == 0);  // Zero flag
+			psw.F.F.S = (DE.bytes.H & 0x80) != 0;  // Sign flag
 			break;
 
 
 		case RAL: 
 			{
-				uint8_t carry = psw.F.CY;
-				psw.F.CY = (psw.A & 0x80) != 0;
+				uint8_t carry = psw.F.F.CY;
+				psw.F.F.CY = (psw.A & 0x80) != 0;
 				psw.A = (psw.A << 1) | carry;
 			}
 			break;
 
 		case DAD_D:
 			{
-				uint32_t HL_pair = X(HL);
-				uint32_t DE_pair = X(DE);
+				uint32_t HL_pair = HL.X;
+				uint32_t DE_pair = DE.X;
 				uint32_t result = HL_pair + DE_pair;
-				X(HL) = result & 0xFFFF;
-				psw.F.CY = (result > 0xFFFF);  // Set carry if overflow
+				HL.X = result & 0xFFFF;
+				psw.F.F.CY = (result > 0xFFFF);  // Set carry if overflow
 			}
 			break;
 
 		case DAD_SP:
 			{
-				uint32_t HL_pair = X(HL);
-				uint32_t SP_pair = X(SP);
+				uint32_t HL_pair = HL.X;
+				uint32_t SP_pair = SP.X;
 				uint32_t result = HL_pair + SP_pair;
-				X(HL) = result & 0xFFFF;
-				psw.F.CY = (result > 0xFFFF);  // Set carry if overflow
+				HL.X = result & 0xFFFF;
+				psw.F.F.CY = (result > 0xFFFF);  // Set carry if overflow
 			}
 			break;
 
 		case DAD_H:
 			{
-				uint32_t HL_pair = X(HL);
+				uint32_t HL_pair = HL.X;
 				uint32_t result = HL_pair + HL_pair;
-				X(HL) = result & 0xFFFF;
-				psw.F.CY = (result > 0xFFFF);  // Set carry if overflow
+				HL.X = result & 0xFFFF;
+				psw.F.F.CY = (result > 0xFFFF);  // Set carry if overflow
 			}
 			break;
 
 
 		case INR_E:
-			DE.L++;
-			psw.F.Z = (DE.L == 0);  // Zero flag
-			psw.F.S = (DE.L & 0x80) != 0;  // Sign flag
+			DE.bytes.L++;
+			psw.F.F.Z = (DE.bytes.L == 0);  // Zero flag
+			psw.F.F.S = (DE.bytes.L & 0x80) != 0;  // Sign flag
 			break;
 
 		case DCR_E:
-			DE.L--;
-			psw.F.Z = (DE.L == 0);  // Zero flag
-			psw.F.S = (DE.L & 0x80) != 0;  // Sign flag
+			DE.bytes.L--;
+			psw.F.F.Z = (DE.bytes.L == 0);  // Zero flag
+			psw.F.F.S = (DE.bytes.L & 0x80) != 0;  // Sign flag
 			break;
 
 
 		case RAR:
 			{
-				uint8_t carry = psw.F.CY;
-				psw.F.CY = (psw.A & 0x01) != 0;
+				uint8_t carry = psw.F.F.CY;
+				psw.F.F.CY = (psw.A & 0x01) != 0;
 				psw.A = (psw.A >> 1) | (carry << 7);
 			}
 			break;
 
 		case LXI_HL_DATA:
-			HL.L = fetch(ram, PC++);
-			HL.H = fetch(ram, PC++);
+			HL.bytes.L = fetch(ram, PC++);
+			HL.bytes.H = fetch(ram, PC++);
 			break;
 
 		case SHLD_A16:
 			{
 				uint16_t addr = fetch(ram, PC++) << 8;
 				addr |= fetch(ram, PC++);
-				ram_write(ram, addr, HL.L);
-				ram_write(ram, addr + 1, HL.H);
+				ram_write(ram, addr, HL.bytes.L);
+				ram_write(ram, addr + 1, HL.bytes.H);
 			}
 			break;
 
 
 		case INR_H:
-			HL.H++;
-			psw.F.Z = (HL.H == 0);  // Zero flag
-			psw.F.S = (HL.H & 0x80) != 0;  // Sign flag
+			HL.bytes.H++;
+			psw.F.F.Z = (HL.bytes.H == 0);  // Zero flag
+			psw.F.F.S = (HL.bytes.H & 0x80) != 0;  // Sign flag
 			break;
 
 		case DCR_H:
-			HL.H--;
-			psw.F.Z = (HL.H == 0);  // Zero flag
-			psw.F.S = (HL.H & 0x80) != 0;  // Sign flag
+			HL.bytes.H--;
+			psw.F.F.Z = (HL.bytes.H == 0);  // Zero flag
+			psw.F.F.S = (HL.bytes.H & 0x80) != 0;  // Sign flag
 			break;
 
 
@@ -680,27 +695,27 @@ void execute(uint8_t X)
 			{
 				uint16_t addr = fetch(ram, PC++) << 8;
 				addr |= fetch(ram, PC++);
-				HL.L = fetch(ram, addr);
-				HL.H = fetch(ram, addr + 1);
+				HL.bytes.L = fetch(ram, addr);
+				HL.bytes.H = fetch(ram, addr + 1);
 			}
 			break;
 
 
 		case INR_L:
-			HL.L++;
-			psw.F.Z = (HL.L == 0);  // Zero flag
-			psw.F.S = (HL.L & 0x80) != 0;  // Sign flag
+			HL.bytes.L++;
+			psw.F.F.Z = (HL.bytes.L == 0);  // Zero flag
+			psw.F.F.S = (HL.bytes.L & 0x80) != 0;  // Sign flag
 			break;
 
 		case DCR_L:
-			HL.L--;
-			psw.F.Z = (HL.L == 0);  // Zero flag
-			psw.F.S = (HL.L & 0x80) != 0;  // Sign flag
+			HL.bytes.L--;
+			psw.F.F.Z = (HL.bytes.L == 0);  // Zero flag
+			psw.F.F.S = (HL.bytes.L & 0x80) != 0;  // Sign flag
 			break;
 
 
 		case CMA: psw.A = ~psw.A; break;
-		case LXI_SP_DATA: SP.L = fetch(ram, PC++); SP.H = fetch(ram, PC++); break;
+		case LXI_SP_DATA: SP.bytes.L = fetch(ram, PC++); SP.bytes.H = fetch(ram, PC++); break;
 
 		case STA_A16:
 			{
@@ -713,27 +728,27 @@ void execute(uint8_t X)
 
 		case INR_M:
 			{
-				uint16_t addr = X(HL);
+				uint16_t addr = HL.X;
 				uint8_t value = fetch(ram, addr);
 				value++;
 				ram_write(ram, addr, value);
-				psw.F.Z = (value == 0);
-				psw.F.S = (value & 0x80) != 0;
+				psw.F.F.Z = (value == 0);
+				psw.F.F.S = (value & 0x80) != 0;
 			}
 			break;
 
 		case DCR_M:
 			{
-				uint16_t addr = X(HL);
+				uint16_t addr = HL.X;
 				uint8_t value = fetch(ram, addr);
 				value--;
 				ram_write(ram, addr, value);
-				psw.F.Z = (value == 0);
-				psw.F.S = (value & 0x80) != 0;
+				psw.F.F.Z = (value == 0);
+				psw.F.F.S = (value & 0x80) != 0;
 			}
 			break;
 
-		case STC: psw.F.CY = 1; break;
+		case STC: psw.F.F.CY = 1; break;
 
 		case LDA_A16:
 			{
@@ -749,94 +764,96 @@ void execute(uint8_t X)
 			break;
 
 		case CMC:
-			psw.F.CY = ~psw.F.CY;
+			psw.F.F.CY = ~psw.F.F.CY;
 			break;
 
 		case PUSH_B:
-			X(SP) = X(SP) - 2;
-			ram_write(ram, X(SP) + 1, BC.H);
-			ram_write(ram, X(SP), BC.L);
+			SP.X = SP.X - 2;
+			ram_write(ram, SP.X + 1, BC.bytes.H);
+			ram_write(ram, SP.X, BC.bytes.L);
 			break;
 
 		case PUSH_D:
-			X(SP) = X(SP) - 2;
-			ram_write(ram, X(SP) + 1, DE.H);
-			ram_write(ram, X(SP), DE.L);
+			SP.X = SP.X - 2;
+			ram_write(ram, SP.X + 1, DE.bytes.H);
+			ram_write(ram, SP.X, DE.bytes.L);
 			break;
 		
 		case PUSH_H:
-			X(SP) = X(SP) - 2;
-			ram_write(ram, X(SP) + 1, HL.H);
-			ram_write(ram, X(SP), HL.L);
+			SP.X = SP.X - 2;
+			ram_write(ram, SP.X + 1, HL.bytes.H);
+			ram_write(ram, SP.X, HL.bytes.L);
 			break;
 
 		case PUSH_PSW:
-			X(SP) = X(SP) - 2;
-			ram_write(ram, X(SP) + 1, psw.A);
-			ram_write(ram, X(SP), XF(psw.F));
+			SP.X = SP.X - 2;
+			ram_write(ram, SP.X + 1, psw.A);
+			ram_write(ram, SP.X, psw.F.x);
 			break;
 
 		case POP_B:
-			BC.L = fetch(ram, X(SP) - 2);
-			BC.H = fetch(ram, X(SP) - 1);
-			X(SP) = X(SP) + 2;
+			{
+				BC.X = Pop16();
+			}
 			break;
 
 		case POP_D:
-			DE.L = fetch(ram, X(SP) - 2);
-			DE.H = fetch(ram, X(SP) - 1);
-			X(SP) = X(SP) + 2;
+			{
+				DE.X = Pop16();
+			}
 			break;
 
 		case POP_H:
-			HL.L = fetch(ram, X(SP) - 2);
-			HL.H = fetch(ram, X(SP) - 1);
-			X(SP) = X(SP) + 2;
+			{
+				HL.X = Pop16();
+			}
 			break;
 
 		case POP_PSW:
-			XF(psw.F) = fetch(ram, X(SP) - 2);
-			psw.A = fetch(ram, X(SP) - 1);
-			X(SP) = X(SP) + 2;
+			{
+				uint16_t x = Pop16();
+				psw.A   = x&255;
+				psw.F.x = x >> 8;
+			}
 			break;
 
 		case RZ:
-			if (psw.F.Z) {
+			if (psw.F.F.Z) {
 				Return();
 			}
 			break;
 		case RNZ:
-			if (!psw.F.Z) {
+			if (!psw.F.F.Z) {
 				Return();
 			}
 			break;
 		case RC:
-			if (psw.F.CY) {
+			if (psw.F.F.CY) {
 				Return();
 			}
 			break;
 		case RNC:
-			if (!psw.F.CY) {
+			if (!psw.F.F.CY) {
 				Return();
 			}
 			break;
 		case RPE:
-			if (psw.F.P) {
+			if (psw.F.F.P) {
 				Return();
 			}
 			break;
 		case RPO:
-			if (!psw.F.P) {
+			if (!psw.F.F.P) {
 				Return();
 			}
 			break;
 		case RM:
-			if (psw.F.S) {
+			if (psw.F.F.S) {
 				Return();
 			}
 			break;
 		case RP:
-			if (!psw.F.S) {
+			if (!psw.F.F.S) {
 				Return();
 			}
 			break;
@@ -845,42 +862,42 @@ void execute(uint8_t X)
 			break;
 
 		case JZ_A16:
-			if (psw.F.Z)
+			if (psw.F.F.Z)
 				JumpI();
 			else PC += 2;
 			break;
 		case JNZ_A16:
-			if (!psw.F.Z)
+			if (!psw.F.F.Z)
 				JumpI();
 			else PC += 2;
 			break;
 		case JC_A16:
-			if (psw.F.CY)
+			if (psw.F.F.CY)
 				JumpI();
 			else PC += 2;
 			break;
 		case JNC_A16:
-			if (!psw.F.CY)
+			if (!psw.F.F.CY)
 				JumpI();
 			else PC += 2;
 			break;
 		case JPE_A16:
-			if (psw.F.P)
+			if (psw.F.F.P)
 				JumpI();
 			else PC += 2;
 			break;
 		case JPO_A16:
-			if (!psw.F.P)
+			if (!psw.F.F.P)
 				JumpI();
 			else PC += 2;
 			break;
 		case JM_A16:
-			if (psw.F.S)
+			if (psw.F.F.S)
 				JumpI();
 			else PC += 2;
 			break;
 		case JP_A16:
-			if (!psw.F.S)
+			if (!psw.F.F.S)
 				JumpI();
 			else PC += 2;
 			break;
@@ -888,42 +905,42 @@ void execute(uint8_t X)
 			JumpI();
 			break;
 		case CZ_A16:
-			if (psw.F.Z) {
+			if (psw.F.F.Z) {
 				Call();
 			} else PC += 2;
 			break;
 		case CNZ_A16:
-			if (!psw.F.Z) {
+			if (!psw.F.F.Z) {
 				Call();
 			} else PC += 2;
 			break;
 		case CC_A16:
-			if (psw.F.CY) {
+			if (psw.F.F.CY) {
 				Call();
 			} else PC += 2;
 			break;
 		case CNC_A16:
-			if (!psw.F.CY) {
+			if (!psw.F.F.CY) {
 				Call();
 			} else PC += 2;
 			break;
 		case CPE_A16:
-			if (psw.F.P) {
+			if (psw.F.F.P) {
 				Call();
 			} else PC += 2;
 			break;
 		case CPO_A16:
-			if (!psw.F.P) {
+			if (!psw.F.F.P) {
 				Call();
 			} else PC += 2;
 			break;
 		case CM_A16:
-			if (psw.F.S) {
+			if (psw.F.F.S) {
 				Call();
 			} else PC += 2;
 			break;
 		case CP_A16:	
-			if (!psw.F.S) {
+			if (!psw.F.F.S) {
 				Call();
 			} else PC += 2;
 			break;
@@ -957,29 +974,29 @@ void execute(uint8_t X)
 
 		case XTHL:
 			{
-				int tmp0 = HL.L;
-				int tmp1 = HL.H;
-				HL.L = fetch(ram, X(SP));
-				HL.H = fetch(ram, X(SP)+1);
-				ram_write(ram, X(SP), tmp0);
-				ram_write(ram, X(SP)+1, tmp1);
+				int tmp0 = HL.bytes.L;
+				int tmp1 = HL.bytes.H;
+				HL.bytes.L = fetch(ram, SP.X);
+				HL.bytes.H = fetch(ram, SP.X+1);
+				ram_write(ram, SP.X, tmp0);
+				ram_write(ram, SP.X+1, tmp1);
 			}
 			break;
 	
 		case PCHL:
-			PC = X(HL);
+			PC = HL.X;
 			break;
 		
 		case XCHG:
 			{
-				int x = X(DE);
-				X(DE) = X(HL);
-				X(HL) = x;
+				int x = DE.X;
+				DE.X = HL.X;
+				HL.X = x;
 			}
 			break;
 		
 		case SPHL:
-			X(SP) = X(HL);
+			SP.X = HL.X;
 			break;
 
 		case EI:

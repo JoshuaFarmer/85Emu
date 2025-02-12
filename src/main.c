@@ -108,12 +108,11 @@ int main(int argc, char* argv[])
 	}
 
 	fprintf(LOG_FILE, "A   - %.2x\n", psw.A);
-	fprintf(LOG_FILE, "BC  - %.4x\n", X(BC));
-	fprintf(LOG_FILE, "DE  - %.4x\n", X(DE));
-	fprintf(LOG_FILE, "HL  - %.4x\n", X(HL));
-	fprintf(LOG_FILE, "SP  - %.4x\n", X(SP));
+	fprintf(LOG_FILE, "BC  - %.4x\n", BC.X);
+	fprintf(LOG_FILE, "DE  - %.4x\n", DE.X);
+	fprintf(LOG_FILE, "HL  - %.4x\n", HL.X);
+	fprintf(LOG_FILE, "SP  - %.4x\n", SP.X);
 	fprintf(LOG_FILE, "PC  - %.4x\n", PC);
-	fprintf(LOG_FILE, "PSW -\n\tS  - %x\n\tZ  - %x\n\tK  - %x\n\tAC - %x\n\tP  - %x\n\tCY - %x\n", psw.F.S, psw.F.Z, psw.F.K, psw.F.AC, psw.F.P, psw.F.CY);
 
 	fclose(LOG_FILE);
 
